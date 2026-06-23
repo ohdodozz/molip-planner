@@ -585,8 +585,20 @@ const DEFAULT_STUDENTS=[
   {id:10,name:'한소희',school:'성심고등학교',grade:2,seat:'C-6',days:['화','목']},
 ];
 const DB='molip_vac_';
-function getStudents(){return JSON.parse(localStorage.getItem(DB+'students')||'null')||DEFAULT_STUDENTS;}
-function saveStudents(a){localStorage.setItem(DB+'students',JSON.stringify(a));}
+function getStudents(){
+  // localStorage 폴백 (Firebase 로드 전 임시)
+  const local = JSON.parse(localStorage.getItem(DB+'students')||'null');
+  return local || DEFAULT_STUDENTS;
+}
+async function getStudentsAsync(){
+  if(window.fbGetStudents) return await window.fbGetStudents();
+  return getStudents();
+}
+function saveStudents(a){
+  localStorage.setItem(DB+'students',JSON.stringify(a));
+  // Firebase에도 동기화
+  if(window.fbSaveStudent) a.forEach(s => window.fbSaveStudent(s));
+}
 function loadState(){return JSON.parse(localStorage.getItem(DB+'state')||'{}');}
 function saveState(s){localStorage.setItem(DB+'state',JSON.stringify(s));}
 function getSD(sid){const s=loadState();if(!s.students)s.students={};if(!s.students[sid])s.students[sid]={plans:[],todaySecs:0,startedAt:null,schedule:[]};if(!s.students[sid].schedule)s.students[sid].schedule=[];return s.students[sid];}
@@ -609,10 +621,18 @@ function goRole(){stopRankInterval();stopTimer();CS=null;showScreen('screen-role
 function goStudentLogin(){document.getElementById('student-name-input').value='';document.getElementById('student-login-error').textContent='';showScreen('screen-student-login');injectMascot('mascot-sl');setTimeout(()=>document.getElementById('student-name-input').focus(),200);}
 function goTeacherLogin(){document.getElementById('teacher-pw').value='';document.getElementById('pw-error').textContent='';showScreen('screen-teacher-login');injectMascot('mascot-tl');}
 
-function studentLogin(){
+async function studentLogin(){
   const v=document.getElementById('student-name-input').value.trim(),e=document.getElementById('student-login-error');
   if(!v){e.textContent='이름을 입력해 줘!';return;}
-  const f=getStudents().find(s=>s.name===v);
+  // Firebase에서 최신 학생 목록 확인
+  let students = getStudents();
+  if(window.fbGetStudents){
+    try{
+      students = await window.fbGetStudents();
+      localStorage.setItem(DB+'students', JSON.stringify(students));
+    }catch(err){ console.warn('Firebase 학생 조회 실패, 로컬 사용'); }
+  }
+  const f=students.find(s=>s.name===v);
   if(!f){e.textContent=`"${v}"은(는) 등록되지 않은 이름이야.`;return;}
   e.textContent='';CS=f;document.getElementById('student-avatar').textContent=f.name[0];
   showScreen('screen-student');switchSTab('schedule',document.querySelector('#student-bnav .bnav-btn'));startRankInterval();
@@ -707,12 +727,28 @@ function clearSchedule(){if(!confirm('오늘 일정을 모두 초기화할까요
 // ════ RANKING ════
 function getRankData(){
   const state=loadState();
+  const fbData = window._fbRankData || {};
   return getStudents().map((st,i)=>{
-    const stored=state.students?.[st.id]?.todaySecs||0,base=INIT_TIMES[i]||0;
-    const online=MOCK_ONLINE.includes(st.id)||(CS&&st.id===CS.id&&timerRunning);
-    const extra=online?Math.floor((Date.now()%100000)/10000)*30:0;
-    return{id:st.id,name:st.name,secs:st.id===CS?.id?(getSD(CS.id).todaySecs+timerSeconds):base+(online?extra:0)+stored,online};
+    const localStored=state.students?.[st.id]?.todaySecs||0;
+    const fbStored = fbData[st.id]?.todaySecs || 0;
+    const stored = Math.max(localStored, fbStored);
+    const online = (fbData[st.id]?.online===true) || (CS&&st.id===CS.id&&timerRunning);
+    return{id:st.id,name:st.name,
+      secs:st.id===CS?.id?(getSD(CS.id).todaySecs+timerSeconds):stored,
+      online};
   }).sort((a,b)=>b.secs-a.secs);
+}
+// Firebase 랭킹 실시간 구독
+function startFbRankWatch(){
+  if(window.fbWatchRanking && !window._rankWatching){
+    window._rankWatching=true;
+    window.fbWatchRanking(data=>{
+      window._fbRankData = data;
+      updateStickyRank();
+      const activeTab = document.querySelector('#student-bnav .bnav-btn.active');
+      if(activeTab?.dataset.tab==='ranking') renderFullRanking();
+    });
+  }
 }
 function renderFullRanking(){
   const data=getRankData(),medals=['🥇','🥈','🥉'];
@@ -729,7 +765,7 @@ function updateStickyRank(){
   document.getElementById('my-rank-num').textContent=(idx+1)+'위';
   document.getElementById('my-rank-time').textContent=fmtTime(data[idx]?.secs||0);
 }
-function startRankInterval(){stopRankInterval();rankInterval=setInterval(()=>{const a=document.querySelector('#student-bnav .bnav-btn.active');if(a?.dataset.tab==='ranking')renderFullRanking();updateStickyRank();},5000);}
+function startRankInterval(){stopRankInterval();startFbRankWatch();rankInterval=setInterval(()=>{const a=document.querySelector('#student-bnav .bnav-btn.active');if(a?.dataset.tab==='ranking')renderFullRanking();updateStickyRank();},5000);}
 function stopRankInterval(){if(rankInterval){clearInterval(rankInterval);rankInterval=null;}}
 
 // ════ PLANNER ════
@@ -802,6 +838,7 @@ function timerStop(auto=false){
   const data=getSD(CS.id),plan=data.plans.find(p=>p.id===activePlanId||p.status==='active');
   if(plan){plan.actualSecs=(plan.actualSecs||0)+timerSeconds;plan.status='done';activePlanId=null;}
   data.todaySecs=(data.todaySecs||0)+timerSeconds;saveSD(CS.id,data);
+  if(window.fbAddStudyTime) window.fbAddStudyTime(CS.id, timerSeconds);
   timerSeconds=0;updateTimerDisplay();
   document.getElementById('btn-start').style.display='flex';document.getElementById('btn-pause').style.display='none';document.getElementById('btn-stop').style.display='none';
   document.getElementById('btn-pause').textContent='⏸ 일시정지';document.getElementById('btn-pause').onclick=timerPause;
@@ -829,8 +866,22 @@ function renderStudyCheck(){
   document.getElementById('check-list').innerHTML=html;
 }
 function renderStudentMgmt(){
-  const students=getStudents(),el=document.getElementById('student-mgmt-list');
+  // Firebase 실시간 구독
+  if(window.fbWatchStudents && !window._studentWatching) {
+    window._studentWatching = true;
+    window.fbWatchStudents(students => {
+      localStorage.setItem(DB+'students', JSON.stringify(students));
+      _renderStudentList(students);
+    });
+    return;
+  }
+  const students=getStudents();
+  _renderStudentList(students);
+}
+function _renderStudentList(students){
+  const el=document.getElementById('student-mgmt-list');
   if(!students.length){el.innerHTML='<div class="empty-state"><div class="ei">👤</div>등록된 학생이 없어요</div>';return;}
+  if(!students||!students.length){el.innerHTML='<div class="empty-state"><div class="ei">👤</div>등록된 학생이 없어요</div>';return;}
   el.innerHTML=students.map(s=>`<div class="sm-item"><div class="sm-av">${s.name[0]}</div><div class="sm-info"><div class="sm-name">${s.name}</div><div class="sm-sub">${s.school} ${s.grade}학년 · 좌석 ${s.seat||'미배정'} · ${s.days.join('·')}요일</div></div><div style="display:flex;gap:5px"><button class="btn-sm-edit" onclick="openStudentPanel(${s.id})">편집</button><button class="btn-sm-del" onclick="deleteStudent(${s.id})">삭제</button></div></div>`).join('');
 }
 function openStudentPanel(id){
@@ -852,7 +903,12 @@ function saveStudentFromPanel(){
   else students.push({id:Math.max(0,...students.map(s=>s.id))+1,name,school,grade,seat,days});
   saveStudents(students);closeStudentPanel();renderStudentMgmt();showToast(editingStudentId?'수정 완료!':'학생 추가 완료!');
 }
-function deleteStudent(id){if(!confirm('정말 삭제할까요?'))return;saveStudents(getStudents().filter(s=>s.id!==id));renderStudentMgmt();showToast('삭제됐어요');}
+function deleteStudent(id){
+  if(!confirm('정말 삭제할까요?'))return;
+  saveStudents(getStudents().filter(s=>s.id!==id));
+  if(window.fbDeleteStudent) window.fbDeleteStudent(id);
+  renderStudentMgmt();showToast('삭제됐어요');
+}
 function renderMonitor(){
   const students=getStudents(),state=loadState();
   const mockStat=['공부 중','공부 중','공부 중','자습 완료','이탈','자습 완료','공부 중','자습 완료','공부 중','자습 완료'];
@@ -879,5 +935,104 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
   if(!localStorage.getItem(DB+'students'))saveStudents(DEFAULT_STUDENTS);
 })();
 </script>
+
+<script type="module">
+// ══════════════════════════════════════════
+//  FIREBASE 실시간 동기화
+// ══════════════════════════════════════════
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, set, get, onValue, update, remove }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDNDo-yOOnyfJ1edM0fczfrF5iwwlWxcc4",
+  authDomain: "molip-planner.firebaseapp.com",
+  databaseURL: "https://molip-planner-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "molip-planner",
+  storageBucket: "molip-planner.firebasestorage.app",
+  messagingSenderId: "855485895738",
+  appId: "1:855485895738:web:f627640c42ecbc939d9103"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const db    = getDatabase(fbApp);
+
+const TODAY = new Date().toDateString().replace(/ /g,'_');
+
+// ── 학생 목록 실시간 동기화 ──────────────────
+// Firebase에서 학생 목록 읽기
+window.fbGetStudents = async function() {
+  const snap = await get(ref(db, 'students'));
+  if (snap.exists()) return Object.values(snap.val());
+  // 없으면 기본 학생 목록을 Firebase에 쓰고 반환
+  const def = window._DEFAULT_STUDENTS || [];
+  await set(ref(db, 'students'), Object.fromEntries(def.map(s => [s.id, s])));
+  return def;
+};
+
+// 학생 저장 (추가/수정)
+window.fbSaveStudent = async function(student) {
+  await set(ref(db, 'students/' + student.id), student);
+};
+
+// 학생 삭제
+window.fbDeleteStudent = async function(id) {
+  await remove(ref(db, 'students/' + id));
+};
+
+// 학생 목록 실시간 구독 (선생님 페이지용)
+window.fbWatchStudents = function(callback) {
+  onValue(ref(db, 'students'), snap => {
+    const data = snap.exists() ? Object.values(snap.val()) : [];
+    callback(data);
+  });
+};
+
+// ── 오늘 공부 기록 실시간 동기화 ─────────────
+// 학생 공부 시작 기록
+window.fbSetStarted = async function(studentId, startTime) {
+  await update(ref(db, `study/${TODAY}/${studentId}`), {
+    startedAt: startTime,
+    online: true,
+    updatedAt: Date.now()
+  });
+};
+
+// 공부 시간 업데이트 (타이머 완료 시)
+window.fbAddStudyTime = async function(studentId, addSecs) {
+  const snap = await get(ref(db, `study/${TODAY}/${studentId}/todaySecs`));
+  const prev = snap.exists() ? snap.val() : 0;
+  await set(ref(db, `study/${TODAY}/${studentId}/todaySecs`), prev + addSecs);
+  await set(ref(db, `study/${TODAY}/${studentId}/online`), false);
+};
+
+// 실시간 랭킹 구독
+window.fbWatchRanking = function(callback) {
+  onValue(ref(db, `study/${TODAY}`), snap => {
+    const data = snap.exists() ? snap.val() : {};
+    callback(data);
+  });
+};
+
+// ── 초기화: 기본 학생 목록 Firebase에 없으면 업로드 ──
+async function initFirebase() {
+  const snap = await get(ref(db, 'students'));
+  if (!snap.exists()) {
+    const def = window._DEFAULT_STUDENTS || [];
+    if (def.length > 0) {
+      await set(ref(db, 'students'), Object.fromEntries(def.map(s => [String(s.id), s])));
+      console.log('[Firebase] 기본 학생 목록 업로드 완료');
+    }
+  }
+  console.log('[Firebase] 연결 완료 ✅');
+
+  // 앱이 준비되면 학생 목록 동기화
+  window.fbReady = true;
+  window.dispatchEvent(new Event('fb-ready'));
+}
+
+initFirebase();
+</script>
+
 </body>
 </html>
