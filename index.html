@@ -912,7 +912,8 @@ function buildPlanHTML(p){
   else if(p.status==='active') footer=`<div class="plan-footer"><button class="pfbtn pfbtn-stop" onclick="timerStop()">⏹ 완료</button><button class="pfbtn pfbtn-edit" onclick="toggleEditPlan(${p.id})">✏️ 수정</button></div>`;
   else footer=`<div class="plan-footer"><span class="done-check">✅ 완료 · ${fmtTime(p.actualSecs)}</span></div>`;
   const ef=isEdit?`<div class="plan-edit-form"><select id="es-${p.id}">${SUBS.map(s=>`<option ${s===p.subject?'selected':''}>${s}</option>`).join('')}</select><input id="eu-${p.id}" value="${p.unit}" placeholder="단원명"><div class="pef-row"><input id="eb-${p.id}" value="${p.book||''}" placeholder="교재"><input id="et-${p.id}" type="number" value="${p.goalMins}" min="5"></div><div class="pef-btns"><button class="pef-cancel" onclick="toggleEditPlan(${p.id})">취소</button><button class="pef-save" onclick="savePlanEdit(${p.id})">저장</button></div></div>`:'';
-  return `<div class="plan-item ${cls}"><div class="plan-body"><div class="plan-top"><span class="plan-subj" style="background:${c.bg};color:${c.t}">${p.subject}</span></div><div class="plan-unit">${p.unit}</div>${p.book?`<div class="plan-book">📚 ${p.book}</div>`:''}<div class="plan-meta"><span>목표 <strong>${p.goalMins}분</strong></span>${p.actualSecs>0?`<span>실제 <strong>${fmtTime(p.actualSecs)}</strong></span>`:''}</div></div>${ef}${footer}</div>`;
+  const carriedBadge=p.carriedOver?'<span class="repeat-badge" style="background:#FED7AA;color:#7C2D12;margin-left:6px">⏪ 이월됨</span>':'';
+  return `<div class="plan-item ${cls}"><div class="plan-body"><div class="plan-top"><span class="plan-subj" style="background:${c.bg};color:${c.t}">${p.subject}</span>${carriedBadge}</div><div class="plan-unit">${p.unit}</div>${p.book?`<div class="plan-book">📚 ${p.book}</div>`:''}<div class="plan-meta"><span>목표 <strong>${p.goalMins}분</strong></span>${p.actualSecs>0?`<span>실제 <strong>${fmtTime(p.actualSecs)}</strong></span>`:''}</div></div>${ef}${footer}</div>`;
 }
 function toggleEditPlan(id){editingPlanId=(editingPlanId===id)?null:id;renderPlanList();}
 function savePlanEdit(id){
@@ -1052,7 +1053,15 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
 (function init(){
   injectMascot('mascot-role');
   const key=new Date().toDateString(),s=loadState();
-  if(s._day!==key){if(s.students)Object.keys(s.students).forEach(k=>{s.students[k].todaySecs=0;s.students[k].plans=[];s.students[k].startedAt=null;s.students[k].schedule=[];});s._day=key;saveState(s);}
+  if(s._day!==key){
+    if(s.students)Object.keys(s.students).forEach(k=>{
+      const st=s.students[k];
+      // 완료(done) 계획은 정리, 미완료(pending/active) 계획은 다음날로 이월
+      const carried=(st.plans||[]).filter(p=>p.status!=='done').map(p=>({...p,status:'pending',carriedOver:true}));
+      st.todaySecs=0;st.plans=carried;st.startedAt=null;st.schedule=[];
+    });
+    s._day=key;saveState(s);
+  }
   if(!localStorage.getItem(DB+'students'))saveStudents(DEFAULT_STUDENTS);
 })();
 </script>
