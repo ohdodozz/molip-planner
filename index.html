@@ -162,11 +162,13 @@
 
     /* 일정 추가 폼 */
     .add-card { background: var(--white); border-radius: var(--r); padding: 18px; box-shadow: var(--sh); margin: 10px 16px 0; }
-    .fg { margin-bottom: 12px; }
+    .fg { margin-bottom: 12px; min-width: 0; }
     .fg label { display: block; font-size: 0.78rem; font-weight: 700; color: var(--text); margin-bottom: 5px; }
-    .fg input, .fg select { width: 100%; padding: 11px 13px; border: 1.5px solid var(--border); border-radius: var(--rsm); font-size: 0.9rem; outline: none; background: var(--white); color: var(--text); transition: border-color 0.2s; }
+    .fg input, .fg select { width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 13px; border: 1.5px solid var(--border); border-radius: var(--rsm); font-size: 0.9rem; outline: none; background: var(--white); color: var(--text); transition: border-color 0.2s; }
+    .fg input[type="time"] { padding: 10px 6px; font-size: 0.82rem; }
     .fg input:focus, .fg select:focus { border-color: var(--dark); }
-    .fg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .fg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
+    .fg-row > .fg { min-width: 0; overflow: hidden; }
     .btn-add-block { width: 100%; padding: 14px; background: var(--dark); color: var(--lime); border: none; border-radius: var(--rpill); font-size: 0.95rem; font-weight: 800; cursor: pointer; }
 
     /* 빈 상태 */
