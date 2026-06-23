@@ -646,7 +646,7 @@ function saveStudents(a){
 }
 function loadState(){return JSON.parse(localStorage.getItem(DB+'state')||'{}');}
 function saveState(s){localStorage.setItem(DB+'state',JSON.stringify(s));}
-function getSD(sid){const s=loadState();if(!s.students)s.students={};if(!s.students[sid])s.students[sid]={plans:[],todaySecs:0,startedAt:null,schedule:[]};if(!s.students[sid].schedule)s.students[sid].schedule=[];return s.students[sid];}
+function getSD(sid){const s=loadState();if(!s.students)s.students={};if(!s.students[sid])s.students[sid]={plans:[],todaySecs:0,startedAt:null,schedule:[],recurringSchedule:[]};if(!s.students[sid].schedule)s.students[sid].schedule=[];if(!s.students[sid].recurringSchedule)s.students[sid].recurringSchedule=[];return s.students[sid];}
 function saveSD(sid,d){const s=loadState();if(!s.students)s.students={};s.students[sid]=d;saveState(s);}
 
 let CS=null,timerInterval=null,timerSeconds=0,timerRunning=false,timerPaused=false,activePlanId=null;
