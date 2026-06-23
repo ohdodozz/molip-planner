@@ -277,6 +277,29 @@
     .logo-brand-color img { height:22px; filter:none; }
     .logo-watermark { display:flex; justify-content:center; padding:12px 0 4px; }
     .logo-watermark img { height:18px; opacity:0.35; }
+
+    /* ── 반복 일정 ── */
+    .repeat-badge {
+      font-size: 0.65rem; font-weight: 800; padding: 2px 7px;
+      border-radius: var(--rpill); margin-left: 6px;
+      background: rgba(255,255,255,0.25); color: var(--white);
+      vertical-align: middle;
+    }
+    .repeat-days-wrap { margin-top: 10px; }
+    .repeat-days-wrap .fg label { margin-bottom: 6px; }
+    .rday-row { display: flex; gap: 7px; margin-top: 6px; }
+    .rday-btn {
+      flex: 1; padding: 8px 4px; text-align: center; border-radius: 8px;
+      font-size: 0.8rem; font-weight: 800;
+      background: var(--bg); color: var(--muted);
+      border: 1.5px solid var(--border); cursor: pointer;
+    }
+    .rday-btn.on { background: var(--dark); color: var(--lime); border-color: var(--dark); }
+    .tl-block.recurring { border-left: 3px solid rgba(255,255,255,0.4); }
+    .recurring-section-label {
+      font-size: 0.72rem; font-weight: 800; color: var(--muted);
+      padding: 14px 0 6px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
     /* ── TOAST ── */
     .toast { position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%); background: var(--dark); color: var(--lime); padding: 11px 22px; border-radius: var(--rpill); font-size: 0.84rem; font-weight: 700; opacity: 0; transition: opacity 0.3s; z-index: 999; white-space: nowrap; pointer-events: none; }
     .toast.show { opacity: 1; }
@@ -427,6 +450,28 @@
           <option value="break">🍚 식사·휴식</option>
           <option value="other">📌 기타</option>
         </select>
+      </div>
+      <div class="fg">
+        <label>🔁 반복 설정</label>
+        <select id="bl-repeat" onchange="toggleRepeatUI()">
+          <option value="none">반복 없음 (오늘만)</option>
+          <option value="daily">매일 반복</option>
+          <option value="weekly">매주 특정 요일만</option>
+        </select>
+      </div>
+      <div class="repeat-days-wrap" id="repeat-days-wrap" style="display:none">
+        <div class="fg">
+          <label>반복 요일 선택</label>
+          <div class="rday-row">
+            <button type="button" class="rday-btn" data-rday="월" onclick="toggleRDay(this)">월</button>
+            <button type="button" class="rday-btn" data-rday="화" onclick="toggleRDay(this)">화</button>
+            <button type="button" class="rday-btn" data-rday="수" onclick="toggleRDay(this)">수</button>
+            <button type="button" class="rday-btn" data-rday="목" onclick="toggleRDay(this)">목</button>
+            <button type="button" class="rday-btn" data-rday="금" onclick="toggleRDay(this)">금</button>
+            <button type="button" class="rday-btn" data-rday="토" onclick="toggleRDay(this)">토</button>
+            <button type="button" class="rday-btn" data-rday="일" onclick="toggleRDay(this)">일</button>
+          </div>
+        </div>
       </div>
       <button class="btn-add-block" onclick="addBlock()">+ 일정 추가</button>
     </div>
@@ -661,6 +706,38 @@ function switchTTab(tab,btn){
   if(tab==='monitor')    renderMonitor();
 }
 
+
+// ── 반복 설정 UI 토글 ──
+function toggleRepeatUI(){
+  const val = document.getElementById('bl-repeat').value;
+  document.getElementById('repeat-days-wrap').style.display = val==='weekly' ? 'block' : 'none';
+}
+function toggleRDay(btn){ btn.classList.toggle('on'); }
+
+// ── 오늘 요일에 해당하는 반복 일정 가져오기 ──
+function getTodayRecurring(data){
+  const todayDay = DAY_KO[new Date().getDay()];
+  return (data.recurringSchedule||[]).filter(b => {
+    if(b.repeat==='daily') return true;
+    if(b.repeat==='weekly') return (b.days||[]).includes(todayDay);
+    return false;
+  }).map(b => ({...b, isRecurring: true}));
+}
+
+// ── 오늘 전체 일정 (일회성 + 반복) ──
+function getTodayAllBlocks(data){
+  const oneTime   = (data.schedule||[]).map(b=>({...b, isRecurring:false}));
+  const recurring = getTodayRecurring(data);
+  // 겹치는 시간대 반복일정 제외
+  const merged = [...oneTime];
+  recurring.forEach(rb => {
+    const rS=t2m(rb.start), rE=t2m(rb.end);
+    const overlaps = oneTime.some(ob => { const oS=t2m(ob.start),oE=t2m(ob.end); return rS<oE&&rE>oS; });
+    if(!overlaps) merged.push(rb);
+  });
+  return merged.sort((a,b)=>t2m(a.start)-t2m(b.start));
+}
+
 // ════ SCHEDULE TAB ════
 function t2m(t){const[h,m]=t.split(':').map(Number);return h*60+m;}
 function m2s(m){const h=Math.floor(m/60),min=m%60;return min?`${h}시간 ${min}분`:`${h}시간`;}
@@ -674,7 +751,7 @@ function renderScheduleTab(){
   renderTimeline();renderSummary();
 }
 function renderSummary(){
-  const blocks=getSD(CS.id).schedule||[];
+  const data_s=getSD(CS.id); const blocks=getTodayAllBlocks(data_s);
   const total  =blocks.reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
   const lecture=blocks.filter(b=>b.type==='lecture').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
   const study  =blocks.filter(b=>b.type==='study').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
@@ -692,14 +769,16 @@ function renderSummary(){
 function typeColor(t){return{lecture:'var(--c-lecture)',study:'var(--c-study)',break:'var(--c-break)',other:'var(--c-other)'}[t]||'#aaa';}
 
 function renderTimeline(){
-  const data=getSD(CS.id),blocks=[...(data.schedule||[])].sort((a,b)=>t2m(a.start)-t2m(b.start));
+  const data=getSD(CS.id),blocks=getTodayAllBlocks(data);
   const wrap=document.getElementById('timeline-wrap');
   if(!blocks.length){wrap.innerHTML=`<div class="tl-empty"><div class="ei">🗓</div>아직 오늘 일정이 없어요<br>아래 폼에서 일정을 추가해 보세요!</div>`;return;}
   let html='<div class="timeline">',cursor=DAY_START*60;
   blocks.forEach(b=>{
     const bS=t2m(b.start),bE=t2m(b.end),dur=bE-bS;
     if(bS>cursor){html+=`<div class="tl-row"><span class="tl-label">${pad2(Math.floor(cursor/60))}:${pad2(cursor%60)}</span><div class="tl-dot"></div><div class="tl-line"></div><div class="tl-free">여유 시간 <span>${m2s(bS-cursor)}</span></div></div>`;}
-    html+=`<div class="tl-row"><span class="tl-label">${fmt(b.start)}</span><div class="tl-dot" style="background:${typeColor(b.type)}"></div><div class="tl-line"></div><div class="tl-block type-${b.type}"><div class="tb-left"><div class="tb-name">${b.name}</div><div class="tb-time">${fmt(b.start)} ~ ${fmt(b.end)}</div></div><div class="tb-dur">${m2s(dur)}</div><button class="tb-del" onclick="deleteBlock(${b.id})">×</button></div></div>`;
+    const repeatBadge = b.repeat==='daily'?'<span class="repeat-badge">매일</span>':
+    b.repeat==='weekly'?`<span class="repeat-badge">매주 ${(b.days||[]).join('·')}</span>`:'';
+  html+=`<div class="tl-row"><span class="tl-label">${fmt(b.start)}</span><div class="tl-dot" style="background:${typeColor(b.type)}"></div><div class="tl-line"></div><div class="tl-block type-${b.type} ${b.isRecurring?'recurring':''}"><div class="tb-left"><div class="tb-name">${b.name}${repeatBadge}</div><div class="tb-time">${fmt(b.start)} ~ ${fmt(b.end)}</div></div><div class="tb-dur">${m2s(dur)}</div><button class="tb-del" onclick="deleteBlock(${b.id},${b.isRecurring})">×</button></div></div>`;
     cursor=bE;
   });
   const endDay=DAY_END*60;
@@ -709,20 +788,62 @@ function renderTimeline(){
 function addBlock(){
   const start=document.getElementById('bl-start').value,end=document.getElementById('bl-end').value;
   const name=document.getElementById('bl-name').value.trim(),type=document.getElementById('bl-type').value;
+  const repeat=document.getElementById('bl-repeat').value;
+  const rdays=[...document.querySelectorAll('.rday-btn.on')].map(b=>b.dataset.rday);
+
   if(!start||!end||!name){showModal('⚠️','잠깐!','시작 시간, 종료 시간, 활동명을 모두 입력해 줘!');return;}
   if(t2m(end)<=t2m(start)){showModal('⚠️','시간 오류','종료 시간이 시작 시간보다 늦어야 해!');return;}
+  if(repeat==='weekly'&&rdays.length===0){showModal('⚠️','요일 선택','반복할 요일을 하나 이상 선택해 줘!');return;}
+
   const data=getSD(CS.id),nS=t2m(start),nE=t2m(end);
-  const ov=data.schedule.find(b=>{const bS=t2m(b.start),bE=t2m(b.end);return nS<bE&&nE>bS;});
+  // 겹침 체크 (오늘 전체 일정 기준)
+  const allBlocks=getTodayAllBlocks(data);
+  const ov=allBlocks.find(b=>{const bS=t2m(b.start),bE=t2m(b.end);return nS<bE&&nE>bS;});
   if(ov){showModal('⚠️','시간 겹침',`"${ov.name}" (${ov.start}~${ov.end})과 시간이 겹쳐!\n시간을 조정해 줘.`);return;}
-  data.schedule.push({id:Date.now(),start,end,name,type});saveSD(CS.id,data);
+
+  const block={id:Date.now(),start,end,name,type,repeat};
+  if(repeat==='weekly') block.days=rdays;
+
+  if(repeat==='none'){
+    data.schedule.push(block);
+  } else {
+    data.recurringSchedule.push(block);
+  }
+  saveSD(CS.id,data);
+
+  // 폼 초기화
   document.getElementById('bl-name').value='';
   document.getElementById('bl-start').value=end;
   const[eh,em]=end.split(':').map(Number);const nh=em+60>=60?eh+1:eh,nm=(em+60)%60;
   document.getElementById('bl-end').value=`${pad2(nh)}:${pad2(nm)}`;
-  renderTimeline();renderSummary();showToast('일정 추가 완료! 🎉');
+  document.getElementById('bl-repeat').value='none';
+  document.getElementById('repeat-days-wrap').style.display='none';
+  document.querySelectorAll('.rday-btn').forEach(b=>b.classList.remove('on'));
+
+  const repeatMsg = repeat==='none'?'오늘 일정':repeat==='daily'?'매일 반복':(`매주 ${rdays.join('·')}요일`);
+  renderTimeline();renderSummary();showToast(`[${repeatMsg}] 일정 추가 완료! 🎉`);
 }
-function deleteBlock(id){const data=getSD(CS.id);data.schedule=data.schedule.filter(b=>b.id!==id);saveSD(CS.id,data);renderTimeline();renderSummary();}
-function clearSchedule(){if(!confirm('오늘 일정을 모두 초기화할까요?'))return;const data=getSD(CS.id);data.schedule=[];saveSD(CS.id,data);renderTimeline();renderSummary();}
+function deleteBlock(id, isRecurring){
+  const data=getSD(CS.id);
+  if(isRecurring){
+    const block = data.recurringSchedule.find(b=>b.id===id);
+    const repeatLabel = block?.repeat==='daily'?'매일 반복':('매주 반복');
+    const choice = confirm(`이 일정은 [${repeatLabel}] 설정된 반복 일정이에요.\n\n[확인] 반복 일정 완전 삭제\n[취소] 취소`);
+    if(!choice) return;
+    data.recurringSchedule=data.recurringSchedule.filter(b=>b.id!==id);
+  } else {
+    data.schedule=data.schedule.filter(b=>b.id!==id);
+  }
+  saveSD(CS.id,data);renderTimeline();renderSummary();
+}
+function clearSchedule(){
+  const choice = confirm('오늘 일정을 초기화할까요?\n\n[확인] 오늘 일정만 삭제 (반복 일정 유지)\n[취소] 취소');
+  if(!choice) return;
+  const data=getSD(CS.id);
+  data.schedule=[];
+  saveSD(CS.id,data);renderTimeline();renderSummary();
+  showToast('오늘 일정이 초기화됐어요 (반복 일정은 유지)');
+}
 
 // ════ RANKING ════
 function getRankData(){
