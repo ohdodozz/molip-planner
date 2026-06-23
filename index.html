@@ -1051,6 +1051,10 @@ function timerPause(){if(!timerRunning)return;clearInterval(timerInterval);timer
 function timerResume(){timerPaused=false;document.getElementById('btn-pause').textContent='⏸ 일시정지';document.getElementById('btn-pause').onclick=timerPause;document.getElementById('timer-status').textContent='공부 중... 🔥 집중!';timerInterval=setInterval(()=>{timerSeconds++;updateTimerDisplay();checkAutoStop();},1000);}
 function timerStop(auto=false){
   if(!timerRunning&&timerSeconds===0)return;
+  if(!auto && timerSeconds>0 && timerSeconds<60){
+    const ok=confirm(`아직 ${timerSeconds}초밖에 안 지났어요!\n정말 공부를 완료할까요?`);
+    if(!ok) return;
+  }
   clearInterval(timerInterval);timerRunning=false;timerPaused=false;
   const data=getSD(CS.id),plan=data.plans.find(p=>p.id===activePlanId||p.status==='active');
   if(plan){plan.actualSecs=(plan.actualSecs||0)+timerSeconds;plan.status='done';activePlanId=null;}
