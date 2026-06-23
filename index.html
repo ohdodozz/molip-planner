@@ -435,6 +435,11 @@
     <div class="sec-title">🕐 타임라인</div>
     <div style="padding:0 16px" id="timeline-wrap"></div>
 
+    <div class="sec-title">🔁 내 반복 일정 전체 목록</div>
+    <div class="g-card" id="recurring-list-card">
+      <div id="recurring-list"></div>
+    </div>
+
     <div class="sec-title">➕ 일정 추가</div>
     <div class="add-card">
       <div class="fg-row">
@@ -748,7 +753,28 @@ function fmtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%6
 function renderScheduleTab(){
   const today=new Date();
   document.getElementById('today-label').textContent=`${today.getMonth()+1}월 ${today.getDate()}일 (${DAY_KO[today.getDay()]})`;
-  renderTimeline();renderSummary();
+  renderTimeline();renderSummary();renderRecurringList();
+}
+function renderRecurringList(){
+  const data=getSD(CS.id);
+  const list=data.recurringSchedule||[];
+  const el=document.getElementById('recurring-list');
+  if(!list.length){
+    el.innerHTML='<div class="empty-state" style="padding:16px"><div class="ei" style="font-size:1.8rem">🔁</div>설정된 반복 일정이 없어요</div>';
+    return;
+  }
+  const sorted=[...list].sort((a,b)=>t2m(a.start)-t2m(b.start));
+  el.innerHTML=sorted.map(b=>{
+    const label = b.repeat==='daily' ? '매일' : `매주 ${(b.days||[]).join('·')}요일`;
+    return `<div class="check-item">
+      <div class="ch-av" style="background:${typeColor(b.type)}">${fmt(b.start).slice(0,2)}</div>
+      <div class="ch-info">
+        <div class="ch-name">${b.name}</div>
+        <div class="ch-sub">${fmt(b.start)} ~ ${fmt(b.end)} · <strong style="color:var(--dark)">${label}</strong></div>
+      </div>
+      <button class="pfbtn pfbtn-del" onclick="deleteBlock(${b.id},true)">×</button>
+    </div>`;
+  }).join('');
 }
 function renderSummary(){
   const data_s=getSD(CS.id); const blocks=getTodayAllBlocks(data_s);
@@ -821,7 +847,7 @@ function addBlock(){
   document.querySelectorAll('.rday-btn').forEach(b=>b.classList.remove('on'));
 
   const repeatMsg = repeat==='none'?'오늘 일정':repeat==='daily'?'매일 반복':(`매주 ${rdays.join('·')}요일`);
-  renderTimeline();renderSummary();showToast(`[${repeatMsg}] 일정 추가 완료! 🎉`);
+  renderTimeline();renderSummary();renderRecurringList();showToast(`[${repeatMsg}] 일정 추가 완료! 🎉`);
 }
 function deleteBlock(id, isRecurring){
   const data=getSD(CS.id);
@@ -834,7 +860,7 @@ function deleteBlock(id, isRecurring){
   } else {
     data.schedule=data.schedule.filter(b=>b.id!==id);
   }
-  saveSD(CS.id,data);renderTimeline();renderSummary();
+  saveSD(CS.id,data);renderTimeline();renderSummary();renderRecurringList();
 }
 function clearSchedule(){
   const choice = confirm('오늘 일정을 초기화할까요?\n\n[확인] 오늘 일정만 삭제 (반복 일정 유지)\n[취소] 취소');
