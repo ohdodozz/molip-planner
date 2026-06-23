@@ -94,6 +94,32 @@
     .sched-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
     .btn-clear { font-size: 0.72rem; color: var(--muted); background: none; border: none; cursor: pointer; }
 
+    /* ── 날짜 스트립 (캘린더) ── */
+    .date-strip-wrap { padding: 14px 16px 4px; }
+    .date-strip {
+      display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
+      scroll-behavior: smooth; -webkit-overflow-scrolling: touch;
+    }
+    .date-strip::-webkit-scrollbar { display: none; }
+    .date-chip {
+      flex-shrink: 0; width: 46px; padding: 8px 0 9px;
+      border-radius: 14px; border: 1.5px solid var(--border);
+      background: var(--white); cursor: pointer; text-align: center;
+      transition: all 0.15s;
+    }
+    .date-chip .dc-dow { font-size: 0.65rem; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+    .date-chip .dc-num { font-size: 0.95rem; font-weight: 800; color: var(--text); }
+    .date-chip.is-today { border-color: var(--dark); }
+    .date-chip.is-today .dc-dow { color: var(--dark); }
+    .date-chip.has-plan::after {
+      content: ''; display: block; width: 4px; height: 4px; border-radius: 50%;
+      background: var(--gold); margin: 4px auto 0;
+    }
+    .date-chip.selected { background: var(--dark); border-color: var(--dark); }
+    .date-chip.selected .dc-dow { color: rgba(255,255,255,0.6); }
+    .date-chip.selected .dc-num { color: var(--lime); }
+    .date-chip.selected.has-plan::after { background: var(--lime); }
+
     /* 요약 3칸 */
     .summary-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; padding: 12px 16px 0; }
     .sbox { border-radius: var(--rsm); padding: 14px 8px; text-align: center; }
@@ -406,9 +432,13 @@
     <div class="sched-header">
       <div>
         <div class="sched-date" id="today-label"></div>
-        <div class="sched-sub">하루 계획을 미리 짜보자 ✏️</div>
+        <div class="sched-sub" id="sched-sub-label">하루 계획을 미리 짜보자 ✏️</div>
       </div>
       <button class="btn-clear" onclick="clearSchedule()">🗑 초기화</button>
+    </div>
+
+    <div class="date-strip-wrap">
+      <div class="date-strip" id="date-strip"></div>
     </div>
 
     <div class="summary-row" id="schedule-summary"></div>
@@ -651,11 +681,27 @@ function saveStudents(a){
 }
 function loadState(){return JSON.parse(localStorage.getItem(DB+'state')||'{}');}
 function saveState(s){localStorage.setItem(DB+'state',JSON.stringify(s));}
-function getSD(sid){const s=loadState();if(!s.students)s.students={};if(!s.students[sid])s.students[sid]={plans:[],todaySecs:0,startedAt:null,schedule:[],recurringSchedule:[]};if(!s.students[sid].schedule)s.students[sid].schedule=[];if(!s.students[sid].recurringSchedule)s.students[sid].recurringSchedule=[];return s.students[sid];}
+function getSD(sid){
+  const s=loadState();if(!s.students)s.students={};
+  if(!s.students[sid])s.students[sid]={plans:[],todaySecs:0,startedAt:null,schedule:[],recurringSchedule:[],scheduleByDate:{}};
+  const st=s.students[sid];
+  if(!st.schedule)st.schedule=[];
+  if(!st.recurringSchedule)st.recurringSchedule=[];
+  if(!st.scheduleByDate)st.scheduleByDate={};
+  // 마이그레이션: 예전 단일 schedule 배열 → 오늘 날짜로 이동
+  if(st.schedule.length>0){
+    const tk=dateKey(new Date());
+    if(!st.scheduleByDate[tk])st.scheduleByDate[tk]=[];
+    st.scheduleByDate[tk]=[...st.scheduleByDate[tk],...st.schedule];
+    st.schedule=[];
+  }
+  return st;
+}
 function saveSD(sid,d){const s=loadState();if(!s.students)s.students={};s.students[sid]=d;saveState(s);}
 
 let CS=null,timerInterval=null,timerSeconds=0,timerRunning=false,timerPaused=false,activePlanId=null;
 let rankInterval=null,editingPlanId=null,editingStudentId=null;
+let selectedDateKey=null;
 const INIT_TIMES=[9540,8280,7920,7140,6300,5760,4980,3960,2700,1680];
 const MOCK_ONLINE=[1,3,5,7];
 const DAY_KO=['일','월','화','수','목','금','토'];
@@ -719,21 +765,29 @@ function toggleRepeatUI(){
 }
 function toggleRDay(btn){ btn.classList.toggle('on'); }
 
-// ── 오늘 요일에 해당하는 반복 일정 가져오기 ──
-function getTodayRecurring(data){
-  const todayDay = DAY_KO[new Date().getDay()];
+// ════ SCHEDULE TAB ════
+function t2m(t){const[h,m]=t.split(':').map(Number);return h*60+m;}
+function m2s(m){const h=Math.floor(m/60),min=m%60;return min?`${h}시간 ${min}분`:`${h}시간`;}
+function pad2(n){return String(n).padStart(2,'0');}
+function fmt(t){const[h,m]=t.split(':').map(Number);return`${pad2(h)}:${pad2(m)}`;}
+function fmtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return`${pad2(h)}:${pad2(m)}:${pad2(sec)}`;}
+function dateKey(d){return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;}
+function parseDateKey(k){const[y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d);}
+
+// ── 특정 날짜 요일에 해당하는 반복 일정 가져오기 ──
+function getRecurringForDate(data, dk){
+  const d=parseDateKey(dk), dayName=DAY_KO[d.getDay()];
   return (data.recurringSchedule||[]).filter(b => {
     if(b.repeat==='daily') return true;
-    if(b.repeat==='weekly') return (b.days||[]).includes(todayDay);
+    if(b.repeat==='weekly') return (b.days||[]).includes(dayName);
     return false;
   }).map(b => ({...b, isRecurring: true}));
 }
 
-// ── 오늘 전체 일정 (일회성 + 반복) ──
-function getTodayAllBlocks(data){
-  const oneTime   = (data.schedule||[]).map(b=>({...b, isRecurring:false}));
-  const recurring = getTodayRecurring(data);
-  // 겹치는 시간대 반복일정 제외
+// ── 특정 날짜 전체 일정 (일회성 + 반복) ──
+function getBlocksForDate(data, dk){
+  const oneTime   = (data.scheduleByDate?.[dk]||[]).map(b=>({...b, isRecurring:false}));
+  const recurring = getRecurringForDate(data, dk);
   const merged = [...oneTime];
   recurring.forEach(rb => {
     const rS=t2m(rb.start), rE=t2m(rb.end);
@@ -743,16 +797,35 @@ function getTodayAllBlocks(data){
   return merged.sort((a,b)=>t2m(a.start)-t2m(b.start));
 }
 
-// ════ SCHEDULE TAB ════
-function t2m(t){const[h,m]=t.split(':').map(Number);return h*60+m;}
-function m2s(m){const h=Math.floor(m/60),min=m%60;return min?`${h}시간 ${min}분`:`${h}시간`;}
-function pad2(n){return String(n).padStart(2,'0');}
-function fmt(t){const[h,m]=t.split(':').map(Number);return`${pad2(h)}:${pad2(m)}`;}
-function fmtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return`${pad2(h)}:${pad2(m)}:${pad2(sec)}`;}
+// ── 날짜 스트립 렌더 ──
+function renderDateStrip(){
+  const data=getSD(CS.id);
+  const todayKey=dateKey(new Date());
+  if(!selectedDateKey) selectedDateKey=todayKey;
+  const strip=document.getElementById('date-strip');
+  let html='';
+  for(let i=-3;i<=10;i++){
+    const d=new Date(); d.setDate(d.getDate()+i);
+    const k=dateKey(d), dow=DAY_KO[d.getDay()];
+    const hasPlan=(data.scheduleByDate?.[k]||[]).length>0;
+    const isToday=k===todayKey, isSel=k===selectedDateKey;
+    html+=`<div class="date-chip ${isToday?'is-today':''} ${isSel?'selected':''} ${hasPlan?'has-plan':''}" onclick="selectDate('${k}')">
+      <div class="dc-dow">${dow}</div><div class="dc-num">${d.getDate()}</div>
+    </div>`;
+  }
+  strip.innerHTML=html;
+  setTimeout(()=>{ const sel=strip.querySelector('.date-chip.selected'); if(sel) sel.scrollIntoView({inline:'center',block:'nearest'}); },30);
+}
+function selectDate(k){ selectedDateKey=k; renderScheduleTab(); }
 
 function renderScheduleTab(){
-  const today=new Date();
-  document.getElementById('today-label').textContent=`${today.getMonth()+1}월 ${today.getDate()}일 (${DAY_KO[today.getDay()]})`;
+  const todayKey=dateKey(new Date());
+  if(!selectedDateKey) selectedDateKey=todayKey;
+  const d=parseDateKey(selectedDateKey);
+  const isToday=selectedDateKey===todayKey, isFuture=selectedDateKey>todayKey;
+  document.getElementById('today-label').textContent=`${d.getMonth()+1}월 ${d.getDate()}일 (${DAY_KO[d.getDay()]})${isToday?' · 오늘':''}`;
+  document.getElementById('sched-sub-label').textContent = isToday?'하루 계획을 미리 짜보자 ✏️':(isFuture?'미래 일정을 미리 등록해보자 📅':'지난 일정 확인하기 🔍');
+  renderDateStrip();
   renderTimeline();renderSummary();renderRecurringList();
 }
 function renderRecurringList(){
@@ -777,7 +850,7 @@ function renderRecurringList(){
   }).join('');
 }
 function renderSummary(){
-  const data_s=getSD(CS.id); const blocks=getTodayAllBlocks(data_s);
+  const data_s=getSD(CS.id); const blocks=getBlocksForDate(data_s, selectedDateKey);
   const total  =blocks.reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
   const lecture=blocks.filter(b=>b.type==='lecture').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
   const study  =blocks.filter(b=>b.type==='study').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
@@ -795,9 +868,9 @@ function renderSummary(){
 function typeColor(t){return{lecture:'var(--c-lecture)',study:'var(--c-study)',break:'var(--c-break)',other:'var(--c-other)'}[t]||'#aaa';}
 
 function renderTimeline(){
-  const data=getSD(CS.id),blocks=getTodayAllBlocks(data);
+  const data=getSD(CS.id),blocks=getBlocksForDate(data, selectedDateKey);
   const wrap=document.getElementById('timeline-wrap');
-  if(!blocks.length){wrap.innerHTML=`<div class="tl-empty"><div class="ei">🗓</div>아직 오늘 일정이 없어요<br>아래 폼에서 일정을 추가해 보세요!</div>`;return;}
+  if(!blocks.length){wrap.innerHTML=`<div class="tl-empty"><div class="ei">🗓</div>아직 이 날 일정이 없어요<br>아래 폼에서 일정을 추가해 보세요!</div>`;return;}
   let html='<div class="timeline">',cursor=DAY_START*60;
   blocks.forEach(b=>{
     const bS=t2m(b.start),bE=t2m(b.end),dur=bE-bS;
@@ -822,8 +895,8 @@ function addBlock(){
   if(repeat==='weekly'&&rdays.length===0){showModal('⚠️','요일 선택','반복할 요일을 하나 이상 선택해 줘!');return;}
 
   const data=getSD(CS.id),nS=t2m(start),nE=t2m(end);
-  // 겹침 체크 (오늘 전체 일정 기준)
-  const allBlocks=getTodayAllBlocks(data);
+  // 겹침 체크 (선택한 날짜 전체 일정 기준)
+  const allBlocks=getBlocksForDate(data, selectedDateKey);
   const ov=allBlocks.find(b=>{const bS=t2m(b.start),bE=t2m(b.end);return nS<bE&&nE>bS;});
   if(ov){showModal('⚠️','시간 겹침',`"${ov.name}" (${ov.start}~${ov.end})과 시간이 겹쳐!\n시간을 조정해 줘.`);return;}
 
@@ -831,7 +904,8 @@ function addBlock(){
   if(repeat==='weekly') block.days=rdays;
 
   if(repeat==='none'){
-    data.schedule.push(block);
+    if(!data.scheduleByDate[selectedDateKey]) data.scheduleByDate[selectedDateKey]=[];
+    data.scheduleByDate[selectedDateKey].push(block);
   } else {
     data.recurringSchedule.push(block);
   }
@@ -846,8 +920,8 @@ function addBlock(){
   document.getElementById('repeat-days-wrap').style.display='none';
   document.querySelectorAll('.rday-btn').forEach(b=>b.classList.remove('on'));
 
-  const repeatMsg = repeat==='none'?'오늘 일정':repeat==='daily'?'매일 반복':(`매주 ${rdays.join('·')}요일`);
-  renderTimeline();renderSummary();renderRecurringList();showToast(`[${repeatMsg}] 일정 추가 완료! 🎉`);
+  const repeatMsg = repeat==='none'?'선택한 날짜':repeat==='daily'?'매일 반복':(`매주 ${rdays.join('·')}요일`);
+  renderDateStrip();renderTimeline();renderSummary();renderRecurringList();showToast(`[${repeatMsg}] 일정 추가 완료! 🎉`);
 }
 function deleteBlock(id, isRecurring){
   const data=getSD(CS.id);
@@ -858,17 +932,17 @@ function deleteBlock(id, isRecurring){
     if(!choice) return;
     data.recurringSchedule=data.recurringSchedule.filter(b=>b.id!==id);
   } else {
-    data.schedule=data.schedule.filter(b=>b.id!==id);
+    data.scheduleByDate[selectedDateKey]=(data.scheduleByDate[selectedDateKey]||[]).filter(b=>b.id!==id);
   }
-  saveSD(CS.id,data);renderTimeline();renderSummary();renderRecurringList();
+  saveSD(CS.id,data);renderDateStrip();renderTimeline();renderSummary();renderRecurringList();
 }
 function clearSchedule(){
-  const choice = confirm('오늘 일정을 초기화할까요?\n\n[확인] 오늘 일정만 삭제 (반복 일정 유지)\n[취소] 취소');
+  const choice = confirm('선택한 날짜의 일정을 초기화할까요?\n\n[확인] 이 날짜 일정만 삭제 (반복 일정 유지)\n[취소] 취소');
   if(!choice) return;
   const data=getSD(CS.id);
-  data.schedule=[];
-  saveSD(CS.id,data);renderTimeline();renderSummary();
-  showToast('오늘 일정이 초기화됐어요 (반복 일정은 유지)');
+  data.scheduleByDate[selectedDateKey]=[];
+  saveSD(CS.id,data);renderDateStrip();renderTimeline();renderSummary();
+  showToast('일정이 초기화됐어요 (반복 일정은 유지)');
 }
 
 // ════ RANKING ════
@@ -1084,7 +1158,7 @@ function closeModal(){document.getElementById('modal').classList.remove('show');
       const st=s.students[k];
       // 완료(done) 계획은 정리, 미완료(pending/active) 계획은 다음날로 이월
       const carried=(st.plans||[]).filter(p=>p.status!=='done').map(p=>({...p,status:'pending',carriedOver:true}));
-      st.todaySecs=0;st.plans=carried;st.startedAt=null;st.schedule=[];
+      st.todaySecs=0;st.plans=carried;st.startedAt=null;
     });
     s._day=key;saveState(s);
   }
