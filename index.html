@@ -858,6 +858,29 @@ function renderTimeline(){
   if(cursor<endDay)html+=`<div class="tl-row"><span class="tl-label">${pad2(Math.floor(cursor/60))}:${pad2(cursor%60)}</span><div class="tl-dot"></div><div class="tl-free">남은 여유 <span>${m2s(endDay-cursor)}</span></div></div>`;
   html+='</div>';wrap.innerHTML=html;
 }
+// 요일을 고려한 진짜 겹침 검사 (반복 일정은 실제 겹치는 요일이 있을 때만 충돌로 판단)
+function findScheduleConflict(data, start, end, repeat, rdays){
+  const nS=t2m(start), nE=t2m(end);
+  const overlapsTime=(b)=>{ const bS=t2m(b.start), bE=t2m(b.end); return nS<bE && nE>bS; };
+  const newDays = repeat==='daily' ? DAY_KO.slice()
+                : repeat==='weekly' ? rdays
+                : [DAY_KO[parseDateKey(selectedDateKey).getDay()]];
+
+  // 1) 반복 일정끼리 비교 — 실제 겹치는 요일이 하나라도 있을 때만 충돌
+  for(const b of (data.recurringSchedule||[])){
+    if(!overlapsTime(b)) continue;
+    const bDays = b.repeat==='daily' ? DAY_KO.slice() : (b.days||[]);
+    if(bDays.some(d=>newDays.includes(d))) return b;
+  }
+  // 2) 일회성 일정과 비교 — 그 날짜의 요일이 새 일정의 적용 요일에 포함될 때만 충돌
+  for(const [dk, blocks] of Object.entries(data.scheduleByDate||{})){
+    const dow = DAY_KO[parseDateKey(dk).getDay()];
+    if(!newDays.includes(dow)) continue;
+    for(const b of blocks){ if(overlapsTime(b)) return b; }
+  }
+  return null;
+}
+
 function addBlock(){
   const start=document.getElementById('bl-start').value,end=document.getElementById('bl-end').value;
   const name=document.getElementById('bl-name').value.trim(),type=document.getElementById('bl-type').value;
@@ -868,10 +891,8 @@ function addBlock(){
   if(t2m(end)<=t2m(start)){showModal('⚠️','시간 오류','종료 시간이 시작 시간보다 늦어야 해!');return;}
   if(repeat==='weekly'&&rdays.length===0){showModal('⚠️','요일 선택','반복할 요일을 하나 이상 선택해 줘!');return;}
 
-  const data=getSD(CS.id),nS=t2m(start),nE=t2m(end);
-  // 겹침 체크 (선택한 날짜 전체 일정 기준)
-  const allBlocks=getBlocksForDate(data, selectedDateKey);
-  const ov=allBlocks.find(b=>{const bS=t2m(b.start),bE=t2m(b.end);return nS<bE&&nE>bS;});
+  const data=getSD(CS.id);
+  const ov=findScheduleConflict(data, start, end, repeat, rdays);
   if(ov){showModal('⚠️','시간 겹침',`"${ov.name}" (${ov.start}~${ov.end})과 시간이 겹쳐!\n시간을 조정해 줘.`);return;}
 
   const block={id:Date.now(),start,end,name,type,repeat};
