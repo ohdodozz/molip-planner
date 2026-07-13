@@ -770,6 +770,10 @@ function fmt(t){const[h,m]=t.split(':').map(Number);return`${pad2(h)}:${pad2(m)}
 function fmtTime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return`${pad2(h)}:${pad2(m)}:${pad2(sec)}`;}
 function dateKey(d){return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;}
 function parseDateKey(k){const[y,m,d]=k.split('-').map(Number);return new Date(y,m-1,d);}
+// 자정 넘김 허용: 종료 < 시작이면 익일로 처리
+function blockDur(b){const s=t2m(b.start),e=t2m(b.end);return e>=s?e-s:(24*60-s)+e;}
+function isOvernight(b){return t2m(b.end)<t2m(b.start);}
+function fmtEnd(b){return isOvernight(b)?`익일 ${fmt(b.end)}`:fmt(b.end);}
 
 // ── 특정 날짜 요일에 해당하는 반복 일정 가져오기 ──
 function getRecurringForDate(data, dk){
@@ -827,9 +831,9 @@ function renderScheduleTab(){
 }
 function renderSummary(){
   const data_s=getSD(CS.id); const blocks=getBlocksForDate(data_s, selectedDateKey);
-  const total  =blocks.reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
-  const lecture=blocks.filter(b=>b.type==='lecture').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
-  const study  =blocks.filter(b=>b.type==='study').reduce((s,b)=>s+t2m(b.end)-t2m(b.start),0);
+  const total  =blocks.reduce((s,b)=>s+blockDur(b),0);
+  const lecture=blocks.filter(b=>b.type==='lecture').reduce((s,b)=>s+blockDur(b),0);
+  const study  =blocks.filter(b=>b.type==='study').reduce((s,b)=>s+blockDur(b),0);
   const free   =Math.max(0,(DAY_END-DAY_START)*60-total);
   const pct    =total?Math.min(100,Math.round(study/total*100)):0;
   document.getElementById('schedule-summary').innerHTML=`
@@ -849,11 +853,11 @@ function renderTimeline(){
   if(!blocks.length){wrap.innerHTML=`<div class="tl-empty"><div class="ei">🗓</div>아직 이 날 일정이 없어요<br>아래 폼에서 일정을 추가해 보세요!</div>`;return;}
   let html='<div class="timeline">',cursor=DAY_START*60;
   blocks.forEach(b=>{
-    const bS=t2m(b.start),bE=t2m(b.end),dur=bE-bS;
+    const bS=t2m(b.start),bE=t2m(b.end),dur=blockDur(b);
     if(bS>cursor){html+=`<div class="tl-row"><span class="tl-label">${pad2(Math.floor(cursor/60))}:${pad2(cursor%60)}</span><div class="tl-dot"></div><div class="tl-line"></div><div class="tl-free">여유 시간 <span>${m2s(bS-cursor)}</span></div></div>`;}
     const repeatBadge = b.repeat==='daily'?'<span class="repeat-badge">매일</span>':
     b.repeat==='weekly'?`<span class="repeat-badge">매주 ${(b.days||[]).join('·')}</span>`:'';
-  html+=`<div class="tl-row"><span class="tl-label">${fmt(b.start)}</span><div class="tl-dot" style="background:${typeColor(b.type)}"></div><div class="tl-line"></div><div class="tl-block type-${b.type} ${b.isRecurring?'recurring':''}"><div class="tb-left"><div class="tb-name">${b.name}${repeatBadge}</div><div class="tb-time">${fmt(b.start)} ~ ${fmt(b.end)}</div></div><div class="tb-dur">${m2s(dur)}</div><button class="tb-del" onclick="deleteBlock(${b.id},${b.isRecurring})">×</button></div></div>`;
+  html+=`<div class="tl-row"><span class="tl-label">${fmt(b.start)}</span><div class="tl-dot" style="background:${typeColor(b.type)}"></div><div class="tl-line"></div><div class="tl-block type-${b.type} ${b.isRecurring?'recurring':''}"><div class="tb-left"><div class="tb-name">${b.name}${repeatBadge}</div><div class="tb-time">${fmt(b.start)} ~ ${fmtEnd(b)}</div></div><div class="tb-dur">${m2s(dur)}</div><button class="tb-del" onclick="deleteBlock(${b.id},${b.isRecurring})">×</button></div></div>`;
     cursor=bE;
   });
   const endDay=DAY_END*60;
@@ -863,7 +867,10 @@ function renderTimeline(){
 // 요일을 고려한 진짜 겹침 검사 (반복 일정은 실제 겹치는 요일이 있을 때만 충돌로 판단)
 function findScheduleConflict(data, start, end, repeat, rdays){
   const nS=t2m(start), nE=t2m(end);
-  const overlapsTime=(b)=>{ const bS=t2m(b.start), bE=t2m(b.end); return nS<bE && nE>bS; };
+  // 자정 넘김 고려한 겹침 검사
+  const toRange=(s,e)=>e>=s?[s,e]:[s,24*60+e];
+  const [nSx,nEx]=toRange(nS,nE);
+  const overlapsTime=(b)=>{ const bS=t2m(b.start),bE=t2m(b.end),[bSx,bEx]=toRange(bS,bE); return nSx<bEx&&nEx>bSx; };
   const newDays = repeat==='daily' ? DAY_KO.slice()
                 : repeat==='weekly' ? rdays
                 : [DAY_KO[parseDateKey(selectedDateKey).getDay()]];
@@ -890,7 +897,7 @@ function addBlock(){
   const rdays=[...document.querySelectorAll('.rday-btn.on')].map(b=>b.dataset.rday);
 
   if(!start||!end||!name){showModal('⚠️','잠깐!','시작 시간, 종료 시간, 활동명을 모두 입력해 줘!');return;}
-  if(t2m(end)<=t2m(start)){showModal('⚠️','시간 오류','종료 시간이 시작 시간보다 늦어야 해!');return;}
+  if(t2m(end)===t2m(start)){showModal('⚠️','시간 오류','시작 시간과 종료 시간이 같아!');return;}
   if(repeat==='weekly'&&rdays.length===0){showModal('⚠️','요일 선택','반복할 요일을 하나 이상 선택해 줘!');return;}
 
   const data=getSD(CS.id);
