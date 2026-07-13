@@ -415,7 +415,6 @@
            onkeydown="if(event.key==='Enter')teacherLogin()">
     <div class="login-error" id="pw-error"></div>
     <button class="btn-lime" onclick="teacherLogin()">로그인 →</button>
-    <p class="hint">데모 비밀번호: 1234</p>
   </div>
 </div>
 
@@ -773,7 +772,7 @@ async function studentLogin(){
   _recoverTimer();
 }
 function teacherLogin(){
-  if(document.getElementById('teacher-pw').value==='1234'){document.getElementById('pw-error').textContent='';showScreen('screen-teacher');switchTTab('studycheck',document.querySelector('#teacher-bnav .bnav-btn'));}
+  if(document.getElementById('teacher-pw').value==='0979'){document.getElementById('pw-error').textContent='';showScreen('screen-teacher');switchTTab('studycheck',document.querySelector('#teacher-bnav .bnav-btn'));}
   else document.getElementById('pw-error').textContent='비밀번호가 올바르지 않아요.';
 }
 
