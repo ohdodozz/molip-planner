@@ -696,7 +696,48 @@ function getSD(sid){
 }
 function saveSD(sid,d){const s=loadState();if(!s.students)s.students={};s.students[sid]=d;saveState(s);}
 
-let CS=null,timerInterval=null,timerSeconds=0,timerRunning=false,timerPaused=false,activePlanId=null;
+let CS=null,timerInterval=null,timerRunning=false,timerPaused=false,activePlanId=null;
+let timerAccumulated=0,timerStartedAt=null; // 타임스탬프 기반 타이머
+
+function getTimerSeconds(){
+  if(timerRunning&&!timerPaused&&timerStartedAt)
+    return timerAccumulated+Math.floor((Date.now()-timerStartedAt)/1000);
+  return timerAccumulated;
+}
+function _saveTimerState(){
+  if(timerRunning&&CS)
+    localStorage.setItem(DB+'timerState',JSON.stringify({sid:CS.id,startedAt:timerStartedAt,accumulated:timerAccumulated,paused:timerPaused,planId:activePlanId}));
+  else
+    localStorage.removeItem(DB+'timerState');
+}
+function _recoverTimer(){
+  const raw=localStorage.getItem(DB+'timerState');
+  if(!raw||!CS)return;
+  try{
+    const t=JSON.parse(raw);
+    if(t.sid!==CS.id){localStorage.removeItem(DB+'timerState');return;}
+    timerAccumulated=t.accumulated||0;
+    timerStartedAt=t.startedAt;
+    timerRunning=true;timerPaused=t.paused||false;activePlanId=t.planId;
+    document.getElementById('btn-start').style.display='none';
+    document.getElementById('btn-pause').style.display='flex';
+    document.getElementById('btn-stop').style.display='flex';
+    if(timerPaused){
+      document.getElementById('btn-pause').textContent='▶ 계속';
+      document.getElementById('btn-pause').onclick=timerResume;
+      document.getElementById('timer-status').textContent='잠깐 쉬는 중 ☕';
+    }else{
+      document.getElementById('timer-status').textContent='공부 중... 🔥 집중!';
+      clearInterval(timerInterval);
+      timerInterval=setInterval(()=>{updateTimerDisplay();checkAutoStop();},1000);
+    }
+    // 공부중 배너 복구
+    const data=getSD(CS.id),plan=data.plans.find(p=>p.id===activePlanId);
+    const banner=document.getElementById('active-plan-banner');
+    if(plan&&banner){banner.style.display='flex';document.getElementById('active-plan-name').textContent=plan.unit||'';}
+    updateTimerDisplay();
+  }catch(e){localStorage.removeItem(DB+'timerState');}
+}
 let rankInterval=null,editingPlanId=null,editingStudentId=null;
 let selectedDateKey=null;
 const INIT_TIMES=[9540,8280,7920,7140,6300,5760,4980,3960,2700,1680];
@@ -729,6 +770,7 @@ async function studentLogin(){
   if(!f){e.textContent=`"${v}"은(는) 등록되지 않은 이름이야.`;return;}
   e.textContent='';CS=f;document.getElementById('student-avatar').textContent=f.name[0];
   showScreen('screen-student');switchSTab('schedule',document.querySelector('#student-bnav .bnav-btn'));startRankInterval();
+  _recoverTimer();
 }
 function teacherLogin(){
   if(document.getElementById('teacher-pw').value==='1234'){document.getElementById('pw-error').textContent='';showScreen('screen-teacher');switchTTab('studycheck',document.querySelector('#teacher-bnav .bnav-btn'));}
@@ -959,7 +1001,7 @@ function getRankData(){
     const stored = Math.max(localStored, fbStored);
     const online = (fbData[st.id]?.online===true) || (CS&&st.id===CS.id&&timerRunning);
     return{id:st.id,name:st.name,
-      secs:st.id===CS?.id?(getSD(CS.id).todaySecs+timerSeconds):stored,
+      secs:st.id===CS?.id?(getSD(CS.id).todaySecs+getTimerSeconds()):stored,
       online};
   }).sort((a,b)=>b.secs-a.secs);
 }
@@ -1050,26 +1092,48 @@ function updateProgress(){
 // ════ TIMER ════
 function timerStart(){
   if(timerRunning&&!timerPaused)return;
-  if(!timerRunning){const data=getSD(CS.id),active=data.plans.find(p=>p.status==='active');if(!active&&data.plans.length>0){showToast('시작할 계획을 먼저 선택해 줘!');return;}timerSeconds=0;if(!data.startedAt){data.startedAt=new Date().toTimeString().slice(0,5);saveSD(CS.id,data);}}
-  timerRunning=true;timerPaused=false;
+  if(!timerRunning){
+    const data=getSD(CS.id),active=data.plans.find(p=>p.status==='active');
+    if(!active&&data.plans.length>0){showToast('시작할 계획을 먼저 선택해 줘!');return;}
+    timerAccumulated=0;
+    if(!data.startedAt){data.startedAt=new Date().toTimeString().slice(0,5);saveSD(CS.id,data);}
+    if(window.fbSetStarted) window.fbSetStarted(CS.id, data.startedAt);
+  }
+  timerRunning=true;timerPaused=false;timerStartedAt=Date.now();
+  _saveTimerState();
   document.getElementById('btn-start').style.display='none';document.getElementById('btn-pause').style.display='flex';document.getElementById('btn-stop').style.display='flex';
   document.getElementById('timer-status').textContent='공부 중... 🔥 집중!';
-  timerInterval=setInterval(()=>{timerSeconds++;updateTimerDisplay();checkAutoStop();},1000);
+  clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{updateTimerDisplay();checkAutoStop();},1000);
 }
-function timerPause(){if(!timerRunning)return;clearInterval(timerInterval);timerPaused=true;document.getElementById('btn-pause').textContent='▶ 계속';document.getElementById('btn-pause').onclick=timerResume;document.getElementById('timer-status').textContent='잠깐 쉬는 중 ☕';}
-function timerResume(){timerPaused=false;document.getElementById('btn-pause').textContent='⏸ 일시정지';document.getElementById('btn-pause').onclick=timerPause;document.getElementById('timer-status').textContent='공부 중... 🔥 집중!';timerInterval=setInterval(()=>{timerSeconds++;updateTimerDisplay();checkAutoStop();},1000);}
+function timerPause(){
+  if(!timerRunning)return;
+  timerAccumulated=getTimerSeconds();timerStartedAt=null;
+  clearInterval(timerInterval);timerPaused=true;_saveTimerState();
+  document.getElementById('btn-pause').textContent='▶ 계속';document.getElementById('btn-pause').onclick=timerResume;
+  document.getElementById('timer-status').textContent='잠깐 쉬는 중 ☕';
+}
+function timerResume(){
+  timerStartedAt=Date.now();timerPaused=false;_saveTimerState();
+  document.getElementById('btn-pause').textContent='⏸ 일시정지';document.getElementById('btn-pause').onclick=timerPause;
+  document.getElementById('timer-status').textContent='공부 중... 🔥 집중!';
+  clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{updateTimerDisplay();checkAutoStop();},1000);
+}
 function timerStop(auto=false){
-  if(!timerRunning&&timerSeconds===0)return;
-  if(!auto && timerSeconds>0 && timerSeconds<60){
-    const ok=confirm(`아직 ${timerSeconds}초밖에 안 지났어요!\n정말 공부를 완료할까요?`);
-    if(!ok) return;
+  const elapsed=getTimerSeconds();
+  if(!timerRunning&&elapsed===0)return;
+  if(!auto&&elapsed>0&&elapsed<60){
+    const ok=confirm(`아직 ${elapsed}초밖에 안 지났어요!\n정말 공부를 완료할까요?`);
+    if(!ok)return;
   }
-  clearInterval(timerInterval);timerRunning=false;timerPaused=false;
+  clearInterval(timerInterval);timerRunning=false;timerPaused=false;timerAccumulated=0;timerStartedAt=null;
+  _saveTimerState();
   const data=getSD(CS.id),plan=data.plans.find(p=>p.id===activePlanId||p.status==='active');
-  if(plan){plan.actualSecs=(plan.actualSecs||0)+timerSeconds;plan.status='done';activePlanId=null;}
-  data.todaySecs=(data.todaySecs||0)+timerSeconds;saveSD(CS.id,data);
-  if(window.fbAddStudyTime) window.fbAddStudyTime(CS.id, timerSeconds);
-  timerSeconds=0;updateTimerDisplay();
+  if(plan){plan.actualSecs=(plan.actualSecs||0)+elapsed;plan.status='done';activePlanId=null;}
+  data.todaySecs=(data.todaySecs||0)+elapsed;saveSD(CS.id,data);
+  if(window.fbAddStudyTime) window.fbAddStudyTime(CS.id,elapsed);
+  updateTimerDisplay();
   document.getElementById('btn-start').style.display='flex';document.getElementById('btn-pause').style.display='none';document.getElementById('btn-stop').style.display='none';
   document.getElementById('btn-pause').textContent='⏸ 일시정지';document.getElementById('btn-pause').onclick=timerPause;
   document.getElementById('timer-status').textContent='공부 준비 완료 ✨';document.getElementById('active-plan-banner').style.display='none';
@@ -1077,9 +1141,12 @@ function timerStop(auto=false){
   if(auto)showModal('⏰','자동 정지','학원 마감 시간이 되어 타이머가 자동 정지됐어!\n오늘 학습 기록이 저장됐어 😊');
   else showToast('고생했어! 오늘도 최고야 🎉');
 }
-function stopTimer(){if(timerRunning||timerSeconds>0){clearInterval(timerInterval);timerRunning=false;timerPaused=false;timerSeconds=0;}}
-function updateTimerDisplay(){document.getElementById('timer-display').textContent=fmtTime(timerSeconds);}
-function checkAutoStop(){if(new Date().getHours()>=22||timerSeconds>=4*3600)timerStop(true);}
+function stopTimer(){clearInterval(timerInterval);timerRunning=false;timerPaused=false;timerAccumulated=0;timerStartedAt=null;_saveTimerState();}
+function updateTimerDisplay(){document.getElementById('timer-display').textContent=fmtTime(getTimerSeconds());}
+function checkAutoStop(){if(new Date().getHours()>=22||getTimerSeconds()>=4*3600)timerStop(true);}
+
+// 화면 복귀 시 즉시 갱신 (폰 잠금 해제 대응)
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateTimerDisplay();});
 
 // ════ TEACHER ════
 function renderStudyCheck(){
