@@ -612,6 +612,14 @@
   <div id="ttab-monitor" class="page">
     <div class="g-card" style="margin-top:14px"><div class="g-card-title">학생별 오늘 자습 현황</div><div id="monitor-list"></div></div>
   </div>
+  <div id="ttab-planner-view" class="page">
+    <div style="padding:14px 16px 0">
+      <div class="g-card" style="margin:0">
+        <div class="g-card-title">학생 플래너 확인</div>
+        <div id="pv-student-list"></div>
+      </div>
+    </div>
+  </div>
   <div class="bottom-nav" id="teacher-bnav">
     <button class="bnav-btn active" data-tab="studycheck" onclick="switchTTab('studycheck',this)">
       <div class="icon-wrap"><span class="icon">▶️</span></div>공부시작
@@ -622,6 +630,32 @@
     <button class="bnav-btn" data-tab="monitor" onclick="switchTTab('monitor',this)">
       <div class="icon-wrap"><span class="icon">📊</span></div>모니터링
     </button>
+    <button class="bnav-btn" data-tab="planner-view" onclick="switchTTab('planner-view',this)">
+      <div class="icon-wrap"><span class="icon">📋</span></div>플래너
+    </button>
+  </div>
+</div>
+
+<!-- 학생 플래너 상세 패널 -->
+<div class="panel-overlay" id="pv-panel">
+  <div class="panel-box" style="max-height:88vh;overflow-y:auto">
+    <div class="panel-handle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="panel-title" id="pv-panel-name" style="margin:0"></div>
+      <button onclick="closePvPanel()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted)">✕</button>
+    </div>
+    <!-- 날짜 선택 -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <button onclick="pvChangeDate(-1)" style="background:var(--border);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:1rem">‹</button>
+      <div id="pv-date-label" style="flex:1;text-align:center;font-weight:700;font-size:.95rem;color:var(--dark)"></div>
+      <button onclick="pvChangeDate(1)" style="background:var(--border);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:1rem">›</button>
+    </div>
+    <!-- 일정 섹션 -->
+    <div style="font-size:.8rem;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">📅 오늘 일정</div>
+    <div id="pv-schedule-list" style="margin-bottom:16px"></div>
+    <!-- 계획 섹션 -->
+    <div style="font-size:.8rem;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">📝 학습 계획</div>
+    <div id="pv-plan-list"></div>
   </div>
 </div>
 
@@ -803,9 +837,10 @@ function switchTTab(tab,btn){
   document.querySelectorAll('#teacher-bnav .bnav-btn').forEach(b=>b.classList.toggle('active',b===btn));
   document.querySelectorAll('#screen-teacher .page').forEach(p=>p.classList.remove('active'));
   document.getElementById('ttab-'+tab).classList.add('active');
-  if(tab==='studycheck') renderStudyCheck();
-  if(tab==='students')   renderStudentMgmt();
-  if(tab==='monitor')    renderMonitor();
+  if(tab==='studycheck')   renderStudyCheck();
+  if(tab==='students')     renderStudentMgmt();
+  if(tab==='monitor')      renderMonitor();
+  if(tab==='planner-view') renderPlannerView();
 }
 
 
@@ -1228,6 +1263,110 @@ function renderMonitor(){
     const pc=sd?.plans?.length||2,dc=sd?.plans?.filter(p=>p.status==='done').length||0;
     return`<div class="mon-item"><div class="sm-av">${s.name[0]}</div><div style="flex:1"><div class="sm-name">${s.name} <span style="font-size:.72rem;font-weight:400;color:var(--muted)">${s.school}</span></div><div class="sm-sub">계획 ${pc}개 중 ${dc}개 완료</div></div><div style="text-align:right"><div style="display:inline-block;padding:4px 10px;border-radius:var(--rpill);background:${st.bg};color:${st.c};font-size:.7rem;font-weight:800;margin-bottom:4px">● ${status}</div><div style="font-size:.85rem;font-weight:800;color:var(--dark);font-variant-numeric:tabular-nums">${fmtTime(secs)}</div></div></div>`;
   }).join('');
+}
+
+// ════ 플래너 보기 (선생님) ════
+let pvStudentId=null, pvDateObj=null;
+
+function renderPlannerView(){
+  const students=getStudents();
+  if(!students.length){
+    document.getElementById('pv-student-list').innerHTML='<div class="empty-state"><div class="ei">👤</div>등록된 학생이 없어요</div>';
+    return;
+  }
+  const state=loadState();
+  document.getElementById('pv-student-list').innerHTML=students.map(s=>{
+    const sd=state.students?.[s.id];
+    const planTotal=sd?.plans?.length||0;
+    const planDone=sd?.plans?.filter(p=>p.status==='done').length||0;
+    const todayKey=dateKey(new Date());
+    const schedCount=(sd?.scheduleByDate?.[todayKey]||[]).length+(sd?.recurringSchedule||[]).length;
+    return`<div class="mon-item" style="cursor:pointer" onclick="openPvPanel(${s.id})">
+      <div class="sm-av">${s.name[0]}</div>
+      <div style="flex:1">
+        <div class="sm-name">${s.name} <span style="font-size:.72rem;font-weight:400;color:var(--muted)">${s.school} ${s.grade}학년</span></div>
+        <div class="sm-sub">일정 ${schedCount}개 · 계획 ${planTotal}개 중 ${planDone}개 완료</div>
+      </div>
+      <div style="font-size:1.2rem;color:var(--muted)">›</div>
+    </div>`;
+  }).join('');
+}
+
+function openPvPanel(sid){
+  pvStudentId=sid;
+  pvDateObj=new Date();
+  document.getElementById('pv-panel').classList.add('show');
+  renderPvDetail();
+}
+function closePvPanel(){
+  document.getElementById('pv-panel').classList.remove('show');
+  pvStudentId=null;
+}
+function pvChangeDate(dir){
+  if(!pvDateObj)return;
+  pvDateObj=new Date(pvDateObj);
+  pvDateObj.setDate(pvDateObj.getDate()+dir);
+  renderPvDetail();
+}
+function renderPvDetail(){
+  if(!pvStudentId)return;
+  const students=getStudents();
+  const s=students.find(st=>st.id===pvStudentId);
+  if(!s)return;
+  const state=loadState();
+  const sd=state.students?.[pvStudentId]||{};
+  const dk=dateKey(pvDateObj);
+  const isToday=dk===dateKey(new Date());
+
+  // 헤더
+  const wd=['일','월','화','수','목','금','토'][pvDateObj.getDay()];
+  document.getElementById('pv-panel-name').textContent=`${s.name} (${s.school} ${s.grade}학년)`;
+  document.getElementById('pv-date-label').textContent=
+    `${pvDateObj.getMonth()+1}월 ${pvDateObj.getDate()}일 (${wd})${isToday?' · 오늘':''}`;
+
+  // 일정
+  const recurring=(sd.recurringSchedule||[]).filter(b=>{
+    const dayName=['일','월','화','수','목','금','토'][pvDateObj.getDay()];
+    return b.repeat==='daily'||(b.repeat==='weekly'&&(b.rdays||[]).includes(dayName));
+  });
+  const oneTime=(sd.scheduleByDate?.[dk]||[]);
+  const allBlocks=[...recurring.map(b=>({...b,tag:'반복'})),...oneTime.map(b=>({...b,tag:''}))];
+  allBlocks.sort((a,b)=>t2m(a.start)-t2m(b.start));
+
+  const schedEl=document.getElementById('pv-schedule-list');
+  if(!allBlocks.length){
+    schedEl.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:8px 0 4px">등록된 일정이 없어요</div>';
+  } else {
+    schedEl.innerHTML=allBlocks.map(b=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="font-size:.8rem;font-weight:700;color:var(--muted);min-width:90px">${fmt(b.start)} ~ ${fmtEnd(b)}</div>
+        <div style="flex:1;font-weight:600;font-size:.9rem">${b.label}</div>
+        ${b.tag?`<div style="font-size:.68rem;padding:2px 7px;background:var(--mint);color:var(--green);border-radius:20px;font-weight:700">${b.tag}</div>`:''}
+      </div>`).join('');
+  }
+
+  // 계획
+  const plans=sd.plans||[];
+  const planEl=document.getElementById('pv-plan-list');
+  if(!isToday){
+    planEl.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:8px 0">학습 계획은 오늘 날짜만 확인 가능해요</div>';
+    return;
+  }
+  if(!plans.length){
+    planEl.innerHTML='<div style="color:var(--muted);font-size:.85rem;padding:8px 0 4px">등록된 계획이 없어요</div>';
+    return;
+  }
+  const statusLabel={'done':'✅ 완료','active':'▶ 진행 중','pending':'⏳ 대기'};
+  const statusColor={'done':'var(--green)','active':'var(--gold)','pending':'var(--muted)'};
+  planEl.innerHTML=plans.map(p=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:.9rem">${p.subject||''} ${p.unit?`· ${p.unit}`:''}</div>
+        ${p.book?`<div style="font-size:.75rem;color:var(--muted)">${p.book}</div>`:''}
+        <div style="font-size:.75rem;color:var(--muted);margin-top:2px">목표 ${p.goalMins||0}분 · 실제 ${Math.floor((p.actualSecs||0)/60)}분</div>
+      </div>
+      <div style="font-size:.75rem;font-weight:700;color:${statusColor[p.status]||'var(--muted)'}">${statusLabel[p.status]||p.status}</div>
+    </div>`).join('');
 }
 
 // ════ TOAST & MODAL ════
