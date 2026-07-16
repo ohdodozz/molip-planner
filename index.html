@@ -740,7 +740,10 @@ function getSD(sid){
   }
   return st;
 }
-function saveSD(sid,d){const s=loadState();if(!s.students)s.students={};s.students[sid]=d;saveState(s);}
+function saveSD(sid,d){
+  const s=loadState();if(!s.students)s.students={};s.students[sid]=d;saveState(s);
+  if(window.fbSaveStudentData) window.fbSaveStudentData(sid,d);
+}
 
 let CS=null,timerInterval=null,timerRunning=false,timerPaused=false,activePlanId=null;
 let timerAccumulated=0,timerStartedAt=null; // 타임스탬프 기반 타이머
@@ -1292,11 +1295,22 @@ function renderPlannerView(){
   }).join('');
 }
 
-function openPvPanel(sid){
+let pvStudentData=null;
+async function openPvPanel(sid){
   pvStudentId=sid;
   pvDateObj=new Date();
+  pvStudentData=null;
   document.getElementById('pv-panel').classList.add('show');
+  // 먼저 로컬 데이터로 빠르게 표시
+  pvStudentData=loadState().students?.[sid]||{};
   renderPvDetail();
+  // Firebase에서 최신 데이터 가져와서 업데이트
+  if(window.fbGetStudentData){
+    try{
+      const fbData=await window.fbGetStudentData(sid);
+      if(fbData){pvStudentData=fbData;renderPvDetail();}
+    }catch(e){console.warn('Firebase 학생 데이터 조회 실패');}
+  }
 }
 function closePvPanel(){
   document.getElementById('pv-panel').classList.remove('show');
@@ -1313,8 +1327,7 @@ function renderPvDetail(){
   const students=getStudents();
   const s=students.find(st=>st.id===pvStudentId);
   if(!s)return;
-  const state=loadState();
-  const sd=state.students?.[pvStudentId]||{};
+  const sd=pvStudentData||{};
   const dk=dateKey(pvDateObj);
   const isToday=dk===dateKey(new Date());
 
@@ -1473,6 +1486,17 @@ window.fbWatchRanking = function(callback) {
     const data = snap.exists() ? snap.val() : {};
     callback(data);
   });
+};
+
+// ── 학생 일정/계획 데이터 동기화 (선생님 플래너 뷰용) ──
+window.fbSaveStudentData = async function(sid, data) {
+  // 배열/객체 변환 문제 없이 JSON 문자열로 저장
+  await set(ref(db, 'studentData/' + sid), { json: JSON.stringify(data) });
+};
+window.fbGetStudentData = async function(sid) {
+  const snap = await get(ref(db, 'studentData/' + sid));
+  if (!snap.exists()) return null;
+  try { return JSON.parse(snap.val().json); } catch(e) { return null; }
 };
 
 // ── 초기화: 기본 학생 목록 Firebase에 없으면 업로드 ──
